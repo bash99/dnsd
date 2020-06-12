@@ -153,10 +153,21 @@ size_t body_callback (void* contents, size_t size, size_t nmemb, void* userp)
     return chunk;
 }
 
+CURL*     curl;
+
+void init_curl() {
+    curl_global_init(CURL_GLOBAL_ALL);
+    curl = curl_easy_init();
+}
+
+void clean_curl() {
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+}
+
 int https_query (struct dns_query* query)
 {
 
-    CURL*     curl;
     CURLcode  res;
 
     char query_str[3 * (MAX_DOMAIN_LENGTH + MAX_SUBDOMAIN_LENGTH)] = {0};
@@ -170,7 +181,7 @@ int https_query (struct dns_query* query)
         strncpy(query_str, OPT_DEFAULT_URL, OPT_SERVER_URL_LEN);
     }
 
-    strcat(query_str, "/resolve?name=");
+    strcat(query_str, "?name=");
     strcat(query_str, query->names);
     strcat(query_str, "&type=");
     strcat(query_str, getTypeString(ntohs(query->qstn->qtype), FALSE));
@@ -183,11 +194,10 @@ int https_query (struct dns_query* query)
     struct curl_slist* headers = NULL;
 
     headers = curl_slist_append(headers, "Accept-Encoding : deflate, sdch, br");
-    headers = curl_slist_append(headers, "Accept : txt/html, application/xml;q=0.8");
-    headers = curl_slist_append(headers, "Accept-Language : en-US,en;q=0.8");
+    headers = curl_slist_append(headers, "accept: application/dns-json");
+    // headers = curl_slist_append(headers, "Accept-Language : en-US,en;q=0.8");
     headers = curl_slist_append(headers, "Cache-Control : max-age=0");
 
-    curl = curl_easy_init();
     if(curl && strlen(getTypeString(ntohs(query->qstn->qtype), FALSE)))
     {
 
@@ -215,7 +225,7 @@ int https_query (struct dns_query* query)
 
         res = curl_easy_perform(curl);
 
-        curl_easy_cleanup(curl);
+        curl_easy_reset(curl);
         curl_slist_free_all(headers);
         LOG_DEBUG("curl_easy_perform() has returned.");
 
@@ -226,8 +236,6 @@ int https_query (struct dns_query* query)
         }
         return EXIT_SUCCESS;
     }
-
-    curl_global_cleanup();
 
     return EXIT_FAILURE;
 }
@@ -268,6 +276,7 @@ int server()
         return EXIT_FAILURE;
     }
 
+    init_curl();
 
     while (running)
     {
@@ -387,6 +396,7 @@ int server()
         memset(names,  0x00, dnlen);
     }
 
+    clean_curl();
     free(buffer);
     free(data);
     free(names);
@@ -507,9 +517,11 @@ size_t json_to_answer(char* answer, struct dns_header_detail* header, size_t max
 
     while ((token = strstr(token, "name")))
     {
-
-        token        = strstr(token, "type");
-        char*   beg  = strchr(token,   ':') + 2;
+        token++;
+        char *beg;
+        beg        = strstr(token, "type");
+        beg        = strchr(beg,   ':') + 1;
+        while(*beg == ' ') beg++;
         size_t  len  = strchr(beg,   ',') - beg;
 
         memset(ctype, 0x00, 10);
@@ -526,26 +538,27 @@ size_t json_to_answer(char* answer, struct dns_header_detail* header, size_t max
         }
         else
         {
-            token   =  beg + len;
+            // token   =  beg + len;
         }
 
         LOG_DEBUG ("(%x) Type : %d (%s)", header->id, type, getTypeString(type, TRUE));
 
-        token       = strstr(token, "TTL");
-        beg         = strchr(beg,   ':') + 2;
+        beg       = strstr(token, "TTL");
+        beg         = strchr(beg,   ':') + 1;
+        while(*beg == ' ') beg++;
         len         = strchr(beg,   ',') - beg;
 
         memset(cttl, 0x00, 10);
         strncpy(cttl, beg, len);
         ttl         = atoi(cttl);
-        token       = beg + len;
+        // token       = beg + len;
 
         LOG_DEBUG ("(%x) TTL : %d", header->id, ttl);
 
         size_t offset = (type == DNS_MX_RECORD)?0:1;
 
-        token       = strstr(token, "data");
-        beg         = strchr(token,   ':');
+        beg       = strstr(token, "data");
+        beg         = strchr(beg,   ':');
         beg         = strchr(beg,   '\"') + 1;
         len         = strchr(beg, '\"') - beg;
         strncpy(data + offset, beg, len);
@@ -668,35 +681,35 @@ char* getTypeString(uint16_t type, int unknown)
     switch(type)
     {
     case DNS_AAA_RECORD:
-        return "AAAA";
+        return "28";
         break;
     case DNS_A_RECORD:
-        return "A";
+        return "1";
         break;
     case DNS_CNAME_RECORD:
-        return "CNAME";
+        return "5";
         break;
     case DNS_SOA_RECORD:
-        return "SOA";
+        return "6";
         break;
     case DNS_NS_RECORD:
-        return "NS";
+        return "2";
         break;
     case DNS_MX_RECORD:
-        return "MX";
+        return "15";
         break;
     case DNS_OPT_RECORD:
-        return "OPT";
+        return "41";
         break;
     case 0xFF:
-        return "ANY";
+        return "255";
         break;
     default:
-        return unknown?"UNKNOWN":"ANY";
+        return unknown?"UNKNOWN":"255";
         break;
     }
 
-    return unknown?"UNKNOWN":"ANY";
+    return unknown?"UNKNOWN":"255";
 }
 
 void format(char* name, size_t length)
